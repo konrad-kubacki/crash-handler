@@ -187,12 +187,12 @@ int main(int argc, char *argv[]) {
   ::WaitForSingleObject(Client_CrashEventHandledHandle, HANDLER_TIMEOUT_MS);
   ::puts("!!! Crash handled!");
 
-    // Now safe to close the memory mapping handle.
+  // Now safe to close the memory mapping handle.
   if (mapping) {
     ::CloseHandle(mapping);
   }
 
-  // 3. Terminate the process.
+  // Terminate the process.
   ::TerminateProcess(::GetCurrentProcess(), 0);
   return EXCEPTION_EXECUTE_HANDLER;
 }
