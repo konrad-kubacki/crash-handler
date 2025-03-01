@@ -20,10 +20,10 @@ char CrashDumpMappingName[]    = "Local\\CrashDumpMapping";
 // MAX_EXCEPTION_CHAIN_DEPTH records.
 const int MAX_EXCEPTION_CHAIN_DEPTH = 10;
 struct CrashData {
-  ::DWORD threadId;
-  ::CONTEXT contextRecord;
-  ::DWORD numExceptionRecords;
-  ::EXCEPTION_RECORD exceptionRecords[MAX_EXCEPTION_CHAIN_DEPTH];
+  ::DWORD thread_id;
+  ::CONTEXT context_record;
+  ::DWORD num_exception_records;
+  ::EXCEPTION_RECORD exception_records[MAX_EXCEPTION_CHAIN_DEPTH];
 };
 
 // This are the child (client) handles used by the exception handler.
@@ -47,7 +47,9 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  if (is_under_crash_handler) {
+  // Do not start the child process if we're under debugger. For some reason,
+  // the debugger does not intercept crashes otherwise.
+  if (is_under_crash_handler || ::IsDebuggerPresent()) {
     // Prepare our crash handler for signaling.
     Client_CrashEventOccuredHandle = ::OpenEventA(EVENT_ALL_ACCESS, FALSE, CrashOccuredEventName);
     Client_CrashEventHandledHandle = ::OpenEventA(EVENT_ALL_ACCESS, FALSE, CrashHandledEventName);
@@ -101,14 +103,14 @@ int main(int argc, char *argv[]) {
         CrashData* data = (CrashData*)::MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, sizeof(CrashData));
         if (data) {
             // Open a file to write the minidump.
-            ::HANDLE dump_file = CreateFileA("crashdump.dmp", GENERIC_WRITE, 0, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
+            ::HANDLE dump_file = ::CreateFileA("crashdump.dmp", GENERIC_WRITE, 0, 0, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, 0);
             if (dump_file != INVALID_HANDLE_VALUE) {
                 // Prepare exception info for MiniDumpWriteDump.
                 ::MINIDUMP_EXCEPTION_INFORMATION mdei = {};
-                mdei.ThreadId = data->threadId;
+                mdei.ThreadId = data->thread_id;
                 ::EXCEPTION_POINTERS ep = {};
-                ep.ExceptionRecord = data->exceptionRecords;
-                ep.ContextRecord   = &data->contextRecord;
+                ep.ExceptionRecord = data->exception_records;
+                ep.ContextRecord   = &data->context_record;
                 mdei.ExceptionPointers = &ep;
                 mdei.ClientPointers = FALSE;
 
@@ -144,27 +146,27 @@ int main(int argc, char *argv[]) {
 
   // Prepare crash data. This is shared with the crash handler process.
   CrashData crash_data = {};
-  crash_data.threadId = ::GetCurrentThreadId();
+  crash_data.thread_id = ::GetCurrentThreadId();
   // Deep copy the context.
-  crash_data.contextRecord = *exception_info->ContextRecord;
+  crash_data.context_record = *exception_info->ContextRecord;
 
   // Deep copy the exception record chain.
   ::EXCEPTION_RECORD const *src = exception_info->ExceptionRecord;
   int i = 0;
   while (src && i < MAX_EXCEPTION_CHAIN_DEPTH) {
-      crash_data.exceptionRecords[i] = *src;
-      crash_data.exceptionRecords[i].ExceptionRecord = 0;
+      crash_data.exception_records[i] = *src;
+      crash_data.exception_records[i].ExceptionRecord = 0;
 
       // "Rewire" the nested pointer: if there's a next record and room remains,
       // point into our array.
       if (src->ExceptionRecord && i < MAX_EXCEPTION_CHAIN_DEPTH - 1) {
-          crash_data.exceptionRecords[i].ExceptionRecord = &crash_data.exceptionRecords[i+1];
+          crash_data.exception_records[i].ExceptionRecord = &crash_data.exception_records[i+1];
       }
 
       src = src->ExceptionRecord;
       i += 1;
   }
-  crash_data.numExceptionRecords = i;
+  crash_data.num_exception_records = i;
 
   // Create a named memory mapping to share crash data with the parent.
   ::HANDLE mapping = ::CreateFileMappingA(INVALID_HANDLE_VALUE, 0, PAGE_READWRITE, 0, sizeof(CrashData), CrashDumpMappingName);
@@ -200,6 +202,7 @@ int main(int argc, char *argv[]) {
 int app_main() {
   ::puts("This is your actual application code.");
 
+  __debugbreak();
   // Simulate a crash.
   *((int*)0) = 0;
 
